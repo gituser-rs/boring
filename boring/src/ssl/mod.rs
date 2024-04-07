@@ -110,7 +110,7 @@ pub use self::error::{Error, ErrorCode, HandshakeError};
 mod async_callbacks;
 mod bio;
 mod callbacks;
-mod compression;
+pub mod compression;
 mod connector;
 mod error;
 mod mut_only;
