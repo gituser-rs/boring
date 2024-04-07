@@ -62,6 +62,7 @@ where
     }
 }
 
+#[derive(Clone)]
 struct StreamWrapper<S> {
     stream: S,
     context: usize,

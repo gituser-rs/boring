@@ -16,7 +16,7 @@ use std::ffi::c_void;
 use std::os::raw::{c_char, c_int, c_uint, c_ulong};
 
 #[allow(clippy::useless_transmute, clippy::derive_partial_eq_without_eq)]
-mod generated {
+pub mod generated {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 pub use generated::*;

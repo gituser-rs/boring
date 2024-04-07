@@ -94,6 +94,7 @@ use crate::x509::verify::X509VerifyParamRef;
 use crate::x509::{X509Name, X509Ref, X509StoreContextRef, X509VerifyResult, X509};
 use crate::{cvt, cvt_0i, cvt_n, cvt_p, init};
 
+pub use crate::ssl::compression::CertCompressionAlgorithm;
 pub use crate::ssl::connector::{
     ConnectConfiguration, SslAcceptor, SslAcceptorBuilder, SslConnector, SslConnectorBuilder,
 };
@@ -101,6 +102,7 @@ pub use crate::ssl::error::{Error, ErrorCode, HandshakeError};
 
 mod bio;
 mod callbacks;
+mod compression;
 mod connector;
 mod error;
 #[cfg(test)]
@@ -1462,6 +1464,12 @@ impl SslContextBuilder {
         }
     }
 
+    pub fn set_session_permutate_extensions(&mut self, enabled: bool) {
+        unsafe {
+            ffi::SSL_CTX_set_permute_extensions(self.as_ptr(), enabled as c_int);
+        }
+    }
+
     /// Sets the extra data at the specified index.
     ///
     /// This can be used to provide data to callbacks registered with the context. Use the
@@ -1494,6 +1502,25 @@ impl SslContextBuilder {
         unsafe { ffi::SSL_CTX_sess_set_cache_size(self.as_ptr(), size.into()).into() }
     }
 
+    /// Sets whether a certificate compression algorithm should be used.
+    ///
+    /// This corresponds to [`SSL_CTX_add_cert_compression_alg`]
+    ///
+    /// [`SSL_CTX_add_cert_compression_alg`]: https://commondatastorage.googleapis.com/chromium-boringssl-docs/ssl.h.html#SSL_CTX_add_cert_compression_alg
+    pub fn add_cert_compression_alg(
+        &mut self,
+        algorithm: CertCompressionAlgorithm,
+    ) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt_0i(ffi::SSL_CTX_add_cert_compression_alg(
+                self.as_ptr(),
+                algorithm as _,
+                algorithm.compression_fn(),
+                algorithm.decompression_fn(),
+            ))
+            .map(|_| ())
+        }
+    }
     /// Sets the context's supported signature algorithms.
     ///
     /// This corresponds to [`SSL_CTX_set1_sigalgs_list`].
@@ -2190,6 +2217,11 @@ impl fmt::Debug for SslRef {
 }
 
 impl SslRef {
+    // #[inline]
+    // pub unsafe fn m_as_ptr(&self) -> *mut ffi::SSL {
+    //     self.as_ptr()
+    // }
+
     fn get_raw_rbio(&self) -> *mut ffi::BIO {
         unsafe { ffi::SSL_get_rbio(self.as_ptr()) }
     }
@@ -2242,6 +2274,19 @@ impl SslRef {
             // this needs to be in an Arc since the callback can register a new callback!
             self.set_ex_data(Ssl::cached_ex_index(), Arc::new(verify));
             ffi::SSL_set_verify(self.as_ptr(), mode.bits as c_int, Some(ssl_raw_verify::<F>));
+        }
+    }
+
+    pub fn add_application_settings(&self, proto: &str) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_add_application_settings(
+                self.as_ptr(),
+                "h2".as_ptr(),
+                proto.len(),
+                ptr::null(),
+                0,
+            ) as c_int)
+            .map(|_| ())
         }
     }
 
