@@ -8,6 +8,9 @@ use crate::ssl::{
     SslOptions, SslRef, SslStream, SslVerifyMode,
 };
 use crate::version;
+use std::net::IpAddr;
+
+use super::MidHandshakeSslStream;
 
 const FFDHE_2048: &str = "
 -----BEGIN DH PARAMETERS-----
@@ -20,9 +23,19 @@ ssbzSibBsu/6iGtCOGEoXJf//////////wIBAg==
 -----END DH PARAMETERS-----
 ";
 
+enum ContextType {
+    WithMethod(SslMethod),
+    #[cfg(feature = "rpk")]
+    Rpk,
+}
+
 #[allow(clippy::inconsistent_digit_grouping)]
-fn ctx(method: SslMethod) -> Result<SslContextBuilder, ErrorStack> {
-    let mut ctx = SslContextBuilder::new(method)?;
+fn ctx(ty: ContextType) -> Result<SslContextBuilder, ErrorStack> {
+    let mut ctx = match ty {
+        ContextType::WithMethod(method) => SslContextBuilder::new(method),
+        #[cfg(feature = "rpk")]
+        ContextType::Rpk => SslContextBuilder::new_rpk(),
+    }?;
 
     let mut opts = SslOptions::ALL
         | SslOptions::NO_COMPRESSION
@@ -64,7 +77,7 @@ impl SslConnector {
     ///
     /// The default configuration is subject to change, and is currently derived from Python.
     pub fn builder(method: SslMethod) -> Result<SslConnectorBuilder, ErrorStack> {
-        let mut ctx = ctx(method)?;
+        let mut ctx = ctx(ContextType::WithMethod(method))?;
         ctx.set_default_verify_paths()?;
         ctx.set_cipher_list(
             "DEFAULT:!aNULL:!eNULL:!MD5:!3DES:!DES:!RC4:!IDEA:!SEED:!aDSS:!SRP:!PSK",
@@ -74,14 +87,44 @@ impl SslConnector {
         Ok(SslConnectorBuilder(ctx))
     }
 
+    /// Creates a new builder for TLS connections with raw public key.
+    #[cfg(feature = "rpk")]
+    pub fn rpk_builder() -> Result<SslConnectorBuilder, ErrorStack> {
+        let mut ctx = ctx(ContextType::Rpk)?;
+        ctx.set_cipher_list(
+            "DEFAULT:!aNULL:!eNULL:!MD5:!3DES:!DES:!RC4:!IDEA:!SEED:!aDSS:!SRP:!PSK",
+        )?;
+
+        Ok(SslConnectorBuilder(ctx))
+    }
+
     /// Initiates a client-side TLS session on a stream.
     ///
     /// The domain is used for SNI and hostname verification.
+    pub fn setup_connect<S>(
+        &self,
+        domain: &str,
+        stream: S,
+    ) -> Result<MidHandshakeSslStream<S>, ErrorStack>
+    where
+        S: Read + Write,
+    {
+        self.configure()?.setup_connect(domain, stream)
+    }
+
+    /// Attempts a client-side TLS session on a stream.
+    ///
+    /// The domain is used for SNI (if it is not an IP address) and hostname verification if enabled.
+    ///
+    /// This is a convenience method which combines [`Self::setup_connect`] and
+    /// [`MidHandshakeSslStream::handshake`].
     pub fn connect<S>(&self, domain: &str, stream: S) -> Result<SslStream<S>, HandshakeError<S>>
     where
         S: Read + Write,
     {
-        self.configure()?.connect(domain, stream)
+        self.setup_connect(domain, stream)
+            .map_err(HandshakeError::SetupFailure)?
+            .handshake()
     }
 
     /// Returns a structure allowing for configuration of a single TLS session before connection.
@@ -168,22 +211,57 @@ impl ConnectConfiguration {
         self.verify_hostname = verify_hostname;
     }
 
-    /// Initiates a client-side TLS session on a stream.
+    /// Returns an [`Ssl`] configured to connect to the provided domain.
     ///
-    /// The domain is used for SNI and hostname verification if enabled.
-    pub fn connect<S>(mut self, domain: &str, stream: S) -> Result<SslStream<S>, HandshakeError<S>>
-    where
-        S: Read + Write,
-    {
-        if self.sni {
+    /// The domain is used for SNI (if it is not an IP address) and hostname verification if enabled.
+    pub fn into_ssl(mut self, domain: &str) -> Result<Ssl, ErrorStack> {
+        if self.sni && domain.parse::<IpAddr>().is_err() {
             self.ssl.set_hostname(domain)?;
         }
 
-        if self.verify_hostname {
+        #[cfg(feature = "rpk")]
+        let verify_hostname = !self.ssl.ssl_context().is_rpk() && self.verify_hostname;
+
+        #[cfg(not(feature = "rpk"))]
+        let verify_hostname = self.verify_hostname;
+
+        if verify_hostname {
             setup_verify_hostname(&mut self.ssl, domain)?;
         }
 
-        self.ssl.connect(stream)
+        Ok(self.ssl)
+    }
+
+    /// Initiates a client-side TLS session on a stream.
+    ///
+    /// The domain is used for SNI (if it is not an IP address) and hostname verification if enabled.
+    ///
+    /// This is a convenience method which combines [`Self::into_ssl`] and
+    /// [`Ssl::setup_connect`].
+    pub fn setup_connect<S>(
+        self,
+        domain: &str,
+        stream: S,
+    ) -> Result<MidHandshakeSslStream<S>, ErrorStack>
+    where
+        S: Read + Write,
+    {
+        Ok(self.into_ssl(domain)?.setup_connect(stream))
+    }
+
+    /// Attempts a client-side TLS session on a stream.
+    ///
+    /// The domain is used for SNI (if it is not an IP address) and hostname verification if enabled.
+    ///
+    /// This is a convenience method which combines [`Self::setup_connect`] and
+    /// [`MidHandshakeSslStream::handshake`].
+    pub fn connect<S>(self, domain: &str, stream: S) -> Result<SslStream<S>, HandshakeError<S>>
+    where
+        S: Read + Write,
+    {
+        self.setup_connect(domain, stream)
+            .map_err(HandshakeError::SetupFailure)?
+            .handshake()
     }
 }
 
@@ -209,6 +287,21 @@ impl DerefMut for ConnectConfiguration {
 pub struct SslAcceptor(SslContext);
 
 impl SslAcceptor {
+    /// Creates a new builder configured to connect to clients that support Raw Public Keys.
+    #[cfg(feature = "rpk")]
+    pub fn rpk() -> Result<SslAcceptorBuilder, ErrorStack> {
+        let mut ctx = ctx(ContextType::Rpk)?;
+        ctx.set_options(SslOptions::NO_TLSV1 | SslOptions::NO_TLSV1_1);
+        let dh = Dh::params_from_pem(FFDHE_2048.as_bytes())?;
+        ctx.set_tmp_dh(&dh)?;
+        ctx.set_cipher_list(
+            "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:\
+             ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:\
+             DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384"
+        )?;
+        Ok(SslAcceptorBuilder(ctx))
+    }
+
     /// Creates a new builder configured to connect to non-legacy clients. This should generally be
     /// considered a reasonable default choice.
     ///
@@ -217,7 +310,7 @@ impl SslAcceptor {
     ///
     /// [docs]: https://wiki.mozilla.org/Security/Server_Side_TLS
     pub fn mozilla_intermediate_v5(method: SslMethod) -> Result<SslAcceptorBuilder, ErrorStack> {
-        let mut ctx = ctx(method)?;
+        let mut ctx = ctx(ContextType::WithMethod(method))?;
         ctx.set_options(SslOptions::NO_TLSV1 | SslOptions::NO_TLSV1_1);
         let dh = Dh::params_from_pem(FFDHE_2048.as_bytes())?;
         ctx.set_tmp_dh(&dh)?;
@@ -238,7 +331,7 @@ impl SslAcceptor {
     /// [docs]: https://wiki.mozilla.org/Security/Server_Side_TLS
     // FIXME remove in next major version
     pub fn mozilla_intermediate(method: SslMethod) -> Result<SslAcceptorBuilder, ErrorStack> {
-        let mut ctx = ctx(method)?;
+        let mut ctx = ctx(ContextType::WithMethod(method))?;
         ctx.set_options(SslOptions::CIPHER_SERVER_PREFERENCE);
         ctx.set_options(SslOptions::NO_TLSV1_3);
         let dh = Dh::params_from_pem(FFDHE_2048.as_bytes())?;
@@ -264,7 +357,7 @@ impl SslAcceptor {
     /// [docs]: https://wiki.mozilla.org/Security/Server_Side_TLS
     // FIXME remove in next major version
     pub fn mozilla_modern(method: SslMethod) -> Result<SslAcceptorBuilder, ErrorStack> {
-        let mut ctx = ctx(method)?;
+        let mut ctx = ctx(ContextType::WithMethod(method))?;
         ctx.set_options(
             SslOptions::CIPHER_SERVER_PREFERENCE | SslOptions::NO_TLSV1 | SslOptions::NO_TLSV1_1,
         );
@@ -277,13 +370,29 @@ impl SslAcceptor {
         Ok(SslAcceptorBuilder(ctx))
     }
 
-    /// Initiates a server-side TLS session on a stream.
-    pub fn accept<S>(&self, stream: S) -> Result<SslStream<S>, HandshakeError<S>>
+    /// Initiates a server-side TLS handshake on a stream.
+    ///
+    /// See [`Ssl::setup_accept`] for more details.
+    pub fn setup_accept<S>(&self, stream: S) -> Result<MidHandshakeSslStream<S>, ErrorStack>
     where
         S: Read + Write,
     {
         let ssl = Ssl::new(&self.0)?;
-        ssl.accept(stream)
+
+        Ok(ssl.setup_accept(stream))
+    }
+
+    /// Attempts a server-side TLS handshake on a stream.
+    ///
+    /// This is a convenience method which combines [`Self::setup_accept`] and
+    /// [`MidHandshakeSslStream::handshake`].
+    pub fn accept<S>(&self, stream: S) -> Result<SslStream<S>, HandshakeError<S>>
+    where
+        S: Read + Write,
+    {
+        self.setup_accept(stream)
+            .map_err(HandshakeError::SetupFailure)?
+            .handshake()
     }
 
     /// Consumes the `SslAcceptor`, returning the inner raw `SslContext`.
