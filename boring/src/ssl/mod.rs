@@ -101,6 +101,7 @@ pub use self::async_callbacks::{
     BoxCustomVerifyFuture, BoxGetSessionFinish, BoxGetSessionFuture, BoxPrivateKeyMethodFinish,
     BoxPrivateKeyMethodFuture, BoxSelectCertFinish, BoxSelectCertFuture, ExDataFuture,
 };
+use self::compression::CertCompressionAlgorithm;
 pub use self::connector::{
     ConnectConfiguration, SslAcceptor, SslAcceptorBuilder, SslConnector, SslConnectorBuilder,
 };
