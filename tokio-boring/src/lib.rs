@@ -68,6 +68,7 @@ where
     let mid_handshake = acceptor
         .setup_accept(AsyncStreamBridge::new(stream))
         .map_err(|err| HandshakeError(ssl::HandshakeError::SetupFailure(err)))?;
+}
 
 async fn handshake<F, S>(f: F, stream: S) -> Result<SslStream<S>, HandshakeError<S>>
 where
