@@ -2925,7 +2925,7 @@ impl SslRef {
         unsafe { ffi::SSL_set_enable_ech_grease(self.as_ptr(), enabled as _) }
     }
 
-    pub fn add_application_settings(&self, proto: &str) -> Result<(), ErrorStack> {
+    pub fn add_application_settings(&mut self, proto: &str) -> Result<(), ErrorStack> {
         unsafe {
             cvt(ffi::SSL_add_application_settings(
                 self.as_ptr(),
