@@ -674,7 +674,7 @@ impl SslSignatureAlgorithm {
 /// A TLS Curve.
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct SslCurve(c_int);
+pub struct SslCurve(pub c_int);
 
 impl SslCurve {
     pub const SECP224R1: SslCurve = SslCurve(ffi::NID_secp224r1);
