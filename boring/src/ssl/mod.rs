@@ -2916,6 +2916,15 @@ impl SslRef {
         }
     }
 
+    /// Set's whether the context should enable ECH GREASE.
+    ///
+    /// This corresponds to [`SSL_set_enable_ech_grease`]
+    ///
+    /// [`SSL_set_enable_ech_grease`]: https://commondatastorage.googleapis.com/chromium-boringssl-docs/ssl.h.html#SSL_set_enable_ech_grease
+    pub fn set_ech_grease_enabled(&mut self, enabled: bool) {
+        unsafe { ffi::SSL_set_enable_ech_grease(self.as_ptr(), enabled as _) }
+    }
+
     pub fn add_application_settings(&self, proto: &str) -> Result<(), ErrorStack> {
         unsafe {
             cvt(ffi::SSL_add_application_settings(
