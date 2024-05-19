@@ -72,6 +72,7 @@ once_cell = { workspace = true }
 libc = { workspace = true }
 boring-sys = { workspace = true }
 brotli = "4.0.0"
+flate2 = "1.0.30"
 
 [dev-dependencies]
 hex = { workspace = true }
