@@ -1,7 +1,8 @@
 [submodule "boring-sys/deps/boringssl"]
 	path = boring-sys/deps/boringssl
 	url = https://github.com/gituser-rs/boringssl.git
-	ignore = dirty
+	branch = master
 [submodule "boring-sys/deps/boringssl-fips"]
 	path = boring-sys/deps/boringssl-fips
 	url = https://github.com/gituser-rs/boringssl.git
+	branch = master
