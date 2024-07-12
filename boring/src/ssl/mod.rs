@@ -2929,7 +2929,7 @@ impl SslRef {
         unsafe {
             cvt(ffi::SSL_add_application_settings(
                 self.as_ptr(),
-                "h2".as_ptr(),
+                proto.as_ptr(),
                 proto.len(),
                 ptr::null(),
                 0,
