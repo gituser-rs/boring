@@ -1783,12 +1783,6 @@ impl SslContextBuilder {
         }
     }
 
-    pub fn set_session_permutate_extensions(&mut self, enabled: bool) {
-        unsafe {
-            ffi::SSL_CTX_set_permute_extensions(self.as_ptr(), enabled as c_int);
-        }
-    }
-
     /// Sets the extra data at the specified index.
     ///
     /// This can be used to provide data to callbacks registered with the context. Use the
