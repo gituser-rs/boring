@@ -671,6 +671,12 @@ impl SslSignatureAlgorithm {
     pub const ED25519: SslSignatureAlgorithm = SslSignatureAlgorithm(ffi::SSL_SIGN_ED25519 as _);
 }
 
+impl From<u16> for SslSignatureAlgorithm {
+    fn from(value: u16) -> Self {
+        Self(value)
+    }
+}
+
 /// A TLS Curve.
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -698,6 +704,9 @@ impl SslCurve {
 
     #[cfg(feature = "pq-experimental")]
     pub const P256_KYBER768_DRAFT00: SslCurve = SslCurve(ffi::NID_P256Kyber768Draft00);
+
+    #[cfg(feature = "pq-experimental")]
+    pub const IPD_WING: SslCurve = SslCurve(ffi::NID_IPDWing);
 
     /// Returns the curve name
     ///
@@ -1062,16 +1071,14 @@ impl SslContextBuilder {
         }
     }
 
-    /// Sets the mode used by the context, returning the previous mode.
+    /// Sets the mode used by the context, returning the new bit-mask after adding mode.
     ///
     /// This corresponds to [`SSL_CTX_set_mode`].
     ///
-    /// [`SSL_CTX_set_mode`]: https://www.openssl.org/docs/man1.0.2/ssl/SSL_CTX_set_mode.html
+    /// [`SSL_CTX_set_mode`]: https://www.openssl.org/docs/man1.0.2/man3/SSL_CTX_set_mode.html
     pub fn set_mode(&mut self, mode: SslMode) -> SslMode {
-        unsafe {
-            let bits = ffi::SSL_CTX_set_mode(self.as_ptr(), mode.bits());
-            SslMode::from_bits_retain(bits)
-        }
+        let bits = unsafe { ffi::SSL_CTX_set_mode(self.as_ptr(), mode.bits()) };
+        SslMode::from_bits_retain(bits)
     }
 
     /// Sets the parameters to be used during ephemeral Diffie-Hellman key exchange.
@@ -1172,7 +1179,7 @@ impl SslContextBuilder {
     /// [`SSL_CTX_set_session_id_context`]: https://www.openssl.org/docs/manmaster/man3/SSL_CTX_set_session_id_context.html
     pub fn set_session_id_context(&mut self, sid_ctx: &[u8]) -> Result<(), ErrorStack> {
         unsafe {
-            assert!(sid_ctx.len() <= c_uint::max_value() as usize);
+            assert!(sid_ctx.len() <= c_uint::MAX as usize);
             cvt(ffi::SSL_CTX_set_session_id_context(
                 self.as_ptr(),
                 sid_ctx.as_ptr(),
@@ -1368,12 +1375,12 @@ impl SslContextBuilder {
 
     /// Sets the minimum supported protocol version.
     ///
-    /// A value of `None` will enable protocol versions down the the lowest version supported by
-    /// OpenSSL.
+    /// If version is `None`, the default minimum version is used. For BoringSSL this defaults to
+    /// TLS 1.0.
     ///
     /// This corresponds to [`SSL_CTX_set_min_proto_version`].
     ///
-    /// [`SSL_CTX_set_min_proto_version`]: https://www.openssl.org/docs/man1.1.0/ssl/SSL_set_min_proto_version.html
+    /// [`SSL_CTX_set_min_proto_version`]: https://www.openssl.org/docs/man1.1.0/ssl/SSL_CTX_set_min_proto_version.html
     pub fn set_min_proto_version(&mut self, version: Option<SslVersion>) -> Result<(), ErrorStack> {
         unsafe {
             cvt(ffi::SSL_CTX_set_min_proto_version(
@@ -1386,12 +1393,11 @@ impl SslContextBuilder {
 
     /// Sets the maximum supported protocol version.
     ///
-    /// A value of `None` will enable protocol versions down the the highest version supported by
-    /// OpenSSL.
+    /// If version is `None`, the default maximum version is used. For BoringSSL this is TLS 1.3.
     ///
     /// This corresponds to [`SSL_CTX_set_max_proto_version`].
     ///
-    /// [`SSL_CTX_set_max_proto_version`]: https://www.openssl.org/docs/man1.1.0/ssl/SSL_set_min_proto_version.html
+    /// [`SSL_CTX_set_max_proto_version`]: https://www.openssl.org/docs/man1.1.0/ssl/SSL_CTX_set_max_proto_version.html
     pub fn set_max_proto_version(&mut self, version: Option<SslVersion>) -> Result<(), ErrorStack> {
         unsafe {
             cvt(ffi::SSL_CTX_set_max_proto_version(
@@ -1404,12 +1410,9 @@ impl SslContextBuilder {
 
     /// Gets the minimum supported protocol version.
     ///
-    /// A value of `None` indicates that all versions down the the lowest version supported by
-    /// OpenSSL are enabled.
-    ///
     /// This corresponds to [`SSL_CTX_get_min_proto_version`].
     ///
-    /// [`SSL_CTX_get_min_proto_version`]: https://www.openssl.org/docs/man1.1.0/ssl/SSL_set_min_proto_version.html
+    /// [`SSL_CTX_get_min_proto_version`]: https://www.openssl.org/docs/man1.1.0/ssl/SSL_get_min_proto_version.html
     pub fn min_proto_version(&mut self) -> Option<SslVersion> {
         unsafe {
             let r = ffi::SSL_CTX_get_min_proto_version(self.as_ptr());
@@ -1423,12 +1426,9 @@ impl SslContextBuilder {
 
     /// Gets the maximum supported protocol version.
     ///
-    /// A value of `None` indicates that all versions down the the highest version supported by
-    /// OpenSSL are enabled.
-    ///
     /// This corresponds to [`SSL_CTX_get_max_proto_version`].
     ///
-    /// [`SSL_CTX_get_max_proto_version`]: https://www.openssl.org/docs/man1.1.0/ssl/SSL_set_min_proto_version.html
+    /// [`SSL_CTX_get_max_proto_version`]: https://www.openssl.org/docs/man3.1/man3/SSL_CTX_get_max_proto_version.html
     pub fn max_proto_version(&mut self) -> Option<SslVersion> {
         unsafe {
             let r = ffi::SSL_CTX_get_max_proto_version(self.as_ptr());
@@ -1454,7 +1454,7 @@ impl SslContextBuilder {
         unsafe {
             #[cfg_attr(not(feature = "fips"), allow(clippy::unnecessary_cast))]
             {
-                assert!(protocols.len() <= ProtosLen::max_value() as usize);
+                assert!(protocols.len() <= ProtosLen::MAX as usize);
             }
             let r = ffi::SSL_CTX_set_alpn_protos(
                 self.as_ptr(),
@@ -1871,6 +1871,20 @@ impl SslContextBuilder {
     /// [`SSL_CTX_set_grease_enabled`]: https://commondatastorage.googleapis.com/chromium-boringssl-docs/ssl.h.html#SSL_CTX_set_grease_enabled
     pub fn set_grease_enabled(&mut self, enabled: bool) {
         unsafe { ffi::SSL_CTX_set_grease_enabled(self.as_ptr(), enabled as _) }
+    }
+
+    /// Configures whether ClientHello extensions should be permuted.
+    ///
+    /// This corresponds to [`SSL_CTX_set_permute_extensions`].
+    ///
+    /// [`SSL_CTX_set_permute_extensions`]: https://commondatastorage.googleapis.com/chromium-boringssl-docs/ssl.h.html#SSL_CTX_set_permute_extensions
+    ///
+    /// Note: This is gated to non-fips because the fips feature builds with a separate
+    /// version of BoringSSL which doesn't yet include these APIs.
+    /// Once the submoduled fips commit is upgraded, these gates can be removed.
+    #[cfg(not(feature = "fips"))]
+    pub fn set_permute_extensions(&mut self, enabled: bool) {
+        unsafe { ffi::SSL_CTX_set_permute_extensions(self.as_ptr(), enabled as _) }
     }
 
     /// Sets the context's supported signature verification algorithms.
@@ -2291,10 +2305,28 @@ impl ClientHello<'_> {
     pub fn random(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.0.random, self.0.random_len) }
     }
+
+    /// Returns the raw list of ciphers supported by the client in its Client Hello record.
+    pub fn ciphers(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.0.cipher_suites, self.0.cipher_suites_len) }
+    }
 }
 
 /// Information about a cipher.
 pub struct SslCipher(*mut ffi::SSL_CIPHER);
+
+impl SslCipher {
+    pub fn from_value(value: u16) -> Option<Self> {
+        unsafe {
+            let ptr = ffi::SSL_get_cipher_by_value(value);
+            if ptr.is_null() {
+                None
+            } else {
+                Some(Self::from_ptr(ptr as *mut ffi::SSL_CIPHER))
+            }
+        }
+    }
+}
 
 impl Stackable for SslCipher {
     type StackType = ffi::stack_st_SSL_CIPHER;
@@ -2409,6 +2441,29 @@ impl SslCipherRef {
             let mut buf = [0; 128];
             let ptr = ffi::SSL_CIPHER_description(self.as_ptr(), buf.as_mut_ptr(), 128);
             String::from_utf8(CStr::from_ptr(ptr as *const _).to_bytes().to_vec()).unwrap()
+        }
+    }
+
+    /// Returns one if the cipher uses an AEAD cipher.
+    ///
+    /// This corresponds to [`SSL_CIPHER_is_aead`].
+    ///
+    /// [`SSL_CIPHER_is_aead`]: https://www.openssl.org/docs/manmaster/man3/SSL_CIPHER_is_aead.html
+    pub fn cipher_is_aead(&self) -> bool {
+        unsafe { ffi::SSL_CIPHER_is_aead(self.as_ptr()) != 0 }
+    }
+
+    /// Returns the NID corresponding to the cipher's authentication type.
+    ///
+    /// This corresponds to [`SSL_CIPHER_get_auth_nid`].
+    ///
+    /// [`SSL_CIPHER_get_auth_nid`]: https://www.openssl.org/docs/manmaster/man3/SSL_CIPHER_get_auth_nid.html
+    pub fn cipher_auth_nid(&self) -> Option<Nid> {
+        let n = unsafe { ffi::SSL_CIPHER_get_auth_nid(self.as_ptr()) };
+        if n == 0 {
+            None
+        } else {
+            Some(Nid::from_raw(n))
         }
     }
 
@@ -2957,6 +3012,20 @@ impl SslRef {
         unsafe { cvt(ffi::SSL_set_tmp_ecdh(self.as_ptr(), key.as_ptr()) as c_int).map(|_| ()) }
     }
 
+    /// Configures whether ClientHello extensions should be permuted.
+    ///
+    /// This corresponds to [`SSL_set_permute_extensions`].
+    ///
+    /// [`SSL_set_permute_extensions`]: https://commondatastorage.googleapis.com/chromium-boringssl-docs/ssl.h.html#SSL_set_permute_extensions
+    ///
+    /// Note: This is gated to non-fips because the fips feature builds with a separate
+    /// version of BoringSSL which doesn't yet include these APIs.
+    /// Once the submoduled fips commit is upgraded, these gates can be removed.
+    #[cfg(not(feature = "fips"))]
+    pub fn set_permute_extensions(&mut self, enabled: bool) {
+        unsafe { ffi::SSL_set_permute_extensions(self.as_ptr(), enabled as _) }
+    }
+
     /// Like [`SslContextBuilder::set_alpn_protos`].
     ///
     /// This corresponds to [`SSL_set_alpn_protos`].
@@ -2967,7 +3036,7 @@ impl SslRef {
         unsafe {
             #[cfg_attr(not(feature = "fips"), allow(clippy::unnecessary_cast))]
             {
-                assert!(protocols.len() <= ProtosLen::max_value() as usize);
+                assert!(protocols.len() <= ProtosLen::MAX as usize);
             }
             let r = ffi::SSL_set_alpn_protos(
                 self.as_ptr(),
@@ -2980,6 +3049,18 @@ impl SslRef {
             } else {
                 Err(ErrorStack::get())
             }
+        }
+    }
+
+    /// Returns the stack of available SslCiphers for `SSL`, sorted by preference.
+    ///
+    /// This corresponds to [`SSL_get_ciphers`].
+    ///
+    /// [`SSL_get_ciphers`]: https://www.openssl.org/docs/man1.0.2/man3/SSL_get_ciphers.html
+    pub fn ciphers(&self) -> &StackRef<SslCipher> {
+        unsafe {
+            let cipher_list = ffi::SSL_get_ciphers(self.as_ptr());
+            StackRef::from_ptr(cipher_list)
         }
     }
 
@@ -3161,6 +3242,71 @@ impl SslRef {
         };
 
         str::from_utf8(version.to_bytes()).unwrap()
+    }
+
+    /// Sets the minimum supported protocol version.
+    ///
+    /// If version is `None`, the default minimum version is used. For BoringSSL this defaults to
+    /// TLS 1.0.
+    ///
+    /// This corresponds to [`SSL_set_min_proto_version`].
+    ///
+    /// [`SSL_set_min_proto_version`]: https://www.openssl.org/docs/man1.1.0/ssl/SSL_set_min_proto_version.html
+    pub fn set_min_proto_version(&mut self, version: Option<SslVersion>) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_set_min_proto_version(
+                self.as_ptr(),
+                version.map_or(0, |v| v.0 as _),
+            ))
+            .map(|_| ())
+        }
+    }
+
+    /// Sets the maximum supported protocol version.
+    ///
+    /// If version is `None`, the default maximum version is used. For BoringSSL this is TLS 1.3.
+    ///
+    /// This corresponds to [`SSL_set_max_proto_version`].
+    ///
+    /// [`SSL_set_max_proto_version`]: https://www.openssl.org/docs/man1.1.0/ssl/SSL_set_max_proto_version.html
+    pub fn set_max_proto_version(&mut self, version: Option<SslVersion>) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_set_max_proto_version(
+                self.as_ptr(),
+                version.map_or(0, |v| v.0 as _),
+            ))
+            .map(|_| ())
+        }
+    }
+
+    /// Gets the minimum supported protocol version.
+    ///
+    /// This corresponds to [`SSL_get_min_proto_version`].
+    ///
+    /// [`SSL_get_min_proto_version`]: https://www.openssl.org/docs/man1.1.0/ssl/SSL_set_min_proto_version.html
+    pub fn min_proto_version(&mut self) -> Option<SslVersion> {
+        unsafe {
+            let r = ffi::SSL_get_min_proto_version(self.as_ptr());
+            if r == 0 {
+                None
+            } else {
+                Some(SslVersion(r))
+            }
+        }
+    }
+
+    /// Gets the maximum supported protocol version.
+    ///
+    /// This corresponds to [`SSL_get_max_proto_version`].
+    ///
+    /// [`SSL_get_max_proto_version`]: https://www.openssl.org/docs/man3.1/man3/SSL_get_max_proto_version.html
+    pub fn max_proto_version(&self) -> Option<SslVersion> {
+        let r = unsafe { ffi::SSL_get_max_proto_version(self.as_ptr()) };
+        if r == 0 {
+            None
+        } else {
+            Some(SslVersion(r))
+        }
     }
 
     /// Returns the protocol selected via Application Layer Protocol Negotiation (ALPN).
@@ -3491,7 +3637,7 @@ impl SslRef {
     /// [`SSL_set_tlsext_status_ocsp_resp`]: https://www.openssl.org/docs/man1.0.2/ssl/SSL_set_tlsext_status_type.html
     pub fn set_ocsp_status(&mut self, response: &[u8]) -> Result<(), ErrorStack> {
         unsafe {
-            assert!(response.len() <= c_int::max_value() as usize);
+            assert!(response.len() <= c_int::MAX as usize);
             let p = cvt_p(ffi::OPENSSL_malloc(response.len() as _))?;
             ptr::copy_nonoverlapping(response.as_ptr(), p as *mut u8, response.len());
             cvt(ffi::SSL_set_tlsext_status_ocsp_resp(
@@ -3654,6 +3800,37 @@ impl SslRef {
         T: HasPrivate,
     {
         unsafe { cvt(ffi::SSL_use_PrivateKey(self.as_ptr(), key.as_ptr())).map(|_| ()) }
+    }
+
+    /// Enables all modes set in `mode` in `SSL`. Returns a bitmask representing the resulting
+    /// enabled modes.
+    ///
+    /// This corresponds to [`SSL_set_mode`].
+    ///
+    /// [`SSL_set_mode`]: https://www.openssl.org/docs/man1.0.2/ssl/SSL_set_mode.html
+    pub fn set_mode(&mut self, mode: SslMode) -> SslMode {
+        let bits = unsafe { ffi::SSL_set_mode(self.as_ptr(), mode.bits()) };
+        SslMode::from_bits_retain(bits)
+    }
+
+    /// Disables all modes set in `mode` in `SSL`. Returns a bitmask representing the resulting
+    /// enabled modes.
+    ///
+    /// This corresponds to [`SSL_clear_mode`].
+    ///
+    /// [`SSL_clear_mode`]: https://www.openssl.org/docs/man3.1/man3/SSL_clear_mode.html
+    pub fn clear_mode(&mut self, mode: SslMode) -> SslMode {
+        let bits = unsafe { ffi::SSL_clear_mode(self.as_ptr(), mode.bits()) };
+        SslMode::from_bits_retain(bits)
+    }
+
+    /// Appends `cert` to the chain associated with the current certificate of `SSL`.
+    ///
+    /// This corresponds to [`SSL_add1_chain_cert`].
+    ///
+    /// [`SSL_add1_chain_cert`]: https://www.openssl.org/docs/man1.1.1/man3/SSL_add1_chain_cert.html
+    pub fn add_chain_cert(&mut self, cert: &X509Ref) -> Result<(), ErrorStack> {
+        unsafe { cvt(ffi::SSL_add1_chain_cert(self.as_ptr(), cert.as_ptr())).map(|_| ()) }
     }
 }
 
@@ -3841,7 +4018,7 @@ impl<S: Read + Write> SslStream<S> {
             return Ok(0);
         }
 
-        let len = usize::min(c_int::max_value() as usize, buf.len()) as c_int;
+        let len = usize::min(c_int::MAX as usize, buf.len()) as c_int;
         let ret = unsafe { ffi::SSL_read(self.ssl().as_ptr(), buf.as_mut_ptr().cast(), len) };
         if ret > 0 {
             Ok(ret as usize)
@@ -3863,7 +4040,7 @@ impl<S: Read + Write> SslStream<S> {
             return Ok(0);
         }
 
-        let len = usize::min(c_int::max_value() as usize, buf.len()) as c_int;
+        let len = usize::min(c_int::MAX as usize, buf.len()) as c_int;
         let ret = unsafe { ffi::SSL_write(self.ssl().as_ptr(), buf.as_ptr().cast(), len) };
         if ret > 0 {
             Ok(ret as usize)
