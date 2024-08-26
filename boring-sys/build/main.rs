@@ -637,6 +637,11 @@ fn main() {
     let bssl_dir = built_boring_source_path(&config);
     let build_path = get_boringssl_platform_output_path(&config);
 
+    if config.target_os == "linux" {
+        // I have no idea why it does not work on my Arch Linux, but this fixes my issue
+        println!("cargo:rustc-link-lib=dylib=c++");
+    }
+
     if config.is_bazel || (config.features.fips && config.env.path.is_some()) {
         println!(
             "cargo:rustc-link-search=native={}/lib/{}",
