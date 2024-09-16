@@ -1881,6 +1881,17 @@ impl SslContextBuilder {
         unsafe { ffi::SSL_CTX_set_permute_extensions(self.as_ptr(), enabled as _) }
     }
 
+    // Remark: should be suffixed by \0
+    pub fn set_extensions_order(&mut self, order: &str) {
+        debug_assert!(order.contains('\0'));
+
+        unsafe { ffi::SSL_CTX_set_extension_order(self.as_ptr(), order.as_ptr() as _) }
+    }
+
+    pub fn set_record_size_limit(&mut self, limit: u32) {
+        unsafe { ffi::SSL_CTX_set_record_size_limit(self.as_ptr(), limit) }
+    }
+
     /// Sets the context's supported signature verification algorithms.
     ///
     /// This corresponds to [`SSL_CTX_set_verify_algorithm_prefs`]
