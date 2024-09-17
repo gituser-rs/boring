@@ -1892,10 +1892,6 @@ impl SslContextBuilder {
         unsafe { ffi::SSL_CTX_set_record_size_limit(self.as_ptr(), limit) }
     }
 
-    pub fn set_firefox_impersonate(&mut self, enabled: bool) {
-        unsafe { ffi::SSL_CTX_set_firefox_impersonate(self.as_ptr(), enabled as i32) }
-    }
-
     /// Sets the context's supported signature verification algorithms.
     ///
     /// This corresponds to [`SSL_CTX_set_verify_algorithm_prefs`]
