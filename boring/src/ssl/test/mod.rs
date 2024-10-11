@@ -11,9 +11,9 @@ use crate::error::ErrorStack;
 use crate::hash::MessageDigest;
 use crate::pkey::PKey;
 use crate::srtp::SrtpProfileId;
-use crate::ssl;
 use crate::ssl::test::server::Server;
 use crate::ssl::SslVersion;
+use crate::ssl::{self, SslCurve};
 use crate::ssl::{
     ExtensionType, ShutdownResult, ShutdownState, Ssl, SslAcceptor, SslAcceptorBuilder,
     SslConnector, SslContext, SslFiletype, SslMethod, SslOptions, SslStream, SslVerifyMode,
@@ -276,6 +276,13 @@ fn test_alpn_server_select_none() {
 }
 
 #[test]
+fn test_empty_alpn() {
+    assert_eq!(ssl::select_next_proto(b"", b""), None);
+    assert_eq!(ssl::select_next_proto(b"", b"\x08http/1.1"), None);
+    assert_eq!(ssl::select_next_proto(b"\x08http/1.1", b""), None);
+}
+
+#[test]
 fn test_alpn_server_unilateral() {
     let server = Server::builder().build();
 
@@ -469,7 +476,7 @@ fn refcount_ssl_context() {
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
-#[cfg_attr(all(target_os = "macos", feature = "vendored"), ignore)]
+#[cfg_attr(all(target_os = "macos"), ignore)]
 fn default_verify_paths() {
     let mut ctx = SslContext::builder(SslMethod::tls()).unwrap();
     ctx.set_default_verify_paths().unwrap();
@@ -930,6 +937,28 @@ fn get_curve() {
 }
 
 #[test]
+fn get_curve_name() {
+    assert_eq!(SslCurve::SECP224R1.name(), Some("P-224"));
+    assert_eq!(SslCurve::SECP256R1.name(), Some("P-256"));
+    assert_eq!(SslCurve::SECP384R1.name(), Some("P-384"));
+    assert_eq!(SslCurve::SECP521R1.name(), Some("P-521"));
+    assert_eq!(SslCurve::X25519.name(), Some("X25519"));
+}
+
+#[cfg(not(feature = "kx-safe-default"))]
+#[test]
+fn set_curves() {
+    let mut ctx = SslContext::builder(SslMethod::tls()).unwrap();
+    ctx.set_curves(&[
+        SslCurve::SECP224R1,
+        SslCurve::SECP256R1,
+        SslCurve::SECP384R1,
+        SslCurve::X25519,
+    ])
+    .expect("Failed to set curves");
+}
+
+#[test]
 fn test_get_ciphers() {
     let ctx_builder = SslContext::builder(SslMethod::tls()).unwrap();
     let ctx_builder_ciphers: Vec<&str> = ctx_builder
@@ -1022,4 +1051,18 @@ fn drop_ex_data_in_ssl() {
     assert_eq!(ssl.replace_ex_data(index, "comté"), None);
     assert_eq!(ssl.replace_ex_data(index, "camembert"), Some("comté"));
     assert_eq!(ssl.replace_ex_data(index, "raclette"), Some("camembert"));
+}
+
+#[test]
+fn test_info_callback() {
+    static CALLED_BACK: AtomicBool = AtomicBool::new(false);
+
+    let server = Server::builder().build();
+    let mut client = server.client();
+    client.ctx().set_info_callback(move |_, _, _| {
+        CALLED_BACK.store(true, Ordering::Relaxed);
+    });
+
+    client.connect();
+    assert!(CALLED_BACK.load(Ordering::Relaxed));
 }
